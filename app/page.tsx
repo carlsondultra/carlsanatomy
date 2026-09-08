@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -5,6 +6,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import Link from "next/link"
+
 
 export default function Home() {
   return (
@@ -18,6 +21,9 @@ export default function Home() {
         </CardHeader>
         <CardContent>
           disclaimer - this is a personal project and not affiliated with any medical institution. The content is for educational purposes only and should not be used for medical diagnosis or treatment.
+        <Button className="w-full mt-4">
+            <Link href="/dashboard">Enter</Link>
+          </Button>
         </CardContent>
       </Card>
     </div>

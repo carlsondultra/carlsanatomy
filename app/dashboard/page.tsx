@@ -11,7 +11,7 @@ export default function Home() {
     <div className="min-h-screen flex items-center justify-center p-4">
       <Card className="max-w-sm w-full">
         <CardHeader>
-          <CardTitle>carls anatomy dashboard</CardTitle>
+          <CardTitle>carl's anatomy dashboard</CardTitle>
           <CardDescription>
             dashboard
           </CardDescription>

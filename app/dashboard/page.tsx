@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 
 import {
   Card,
@@ -17,14 +17,6 @@ import { Textarea } from "@/components/ui/textarea"
 
 import { supabase } from "@/lib/supabase"
 
-const queue = [
-  { id: "IMG-1042", title: "Chest PA", tag: "Favorites", status: "Open", regions: 3 },
-  { id: "IMG-1043", title: "Left Wrist", tag: "Unsorted", status: "Queued", regions: 1 },
-  { id: "IMG-1044", title: "Lumbar Spine", tag: "Study Set", status: "Queued", regions: 4 },
-  { id: "IMG-1045", title: "Right Knee", tag: "Archived", status: "Done", regions: 2 },
-  { id: "IMG-1046", title: "Chest Lateral", tag: "Favorites", status: "Open", regions: 2 },
-]
-
 const annotations = [
   { id: 1, label: "Interesting shadow", color: "bg-red-500", author: "You", time: "2m ago", note: "Noticed a darker patch here — worth comparing with other scans." },
   { id: 2, label: "Small dot", color: "bg-amber-500", author: "You", time: "32m ago", note: "Tiny bright spot. Probably nothing, but flagging it to check later." },
@@ -39,10 +31,25 @@ type Circle = {
   note: string
 }
 
-function tagVariant(tag: string) {
-  if (tag === "Favorites") return "default"
-  if (tag === "Study Set") return "destructive"
-  return "secondary"
+type StoredImage = {
+  name: string
+  url: string
+  createdAt: string | null
+}
+
+function friendlyName(name: string) {
+  const stripped = name.replace(/^[0-9a-f-]{36}-/i, "")
+  return stripped.replace(/\.[^.]+$/, "") || name
+}
+
+function formatDate(iso: string | null) {
+  if (!iso) return "—"
+  const d = new Date(iso)
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })
 }
 
 export default function Home() {
@@ -54,6 +61,50 @@ export default function Home() {
   const [circles, setCircles] = useState<Circle[]>([])
   const [drawMode, setDrawMode] = useState(false)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+
+  const [images, setImages] = useState<StoredImage[]>([])
+  const [imagesLoading, setImagesLoading] = useState(true)
+  const [imagesError, setImagesError] = useState<string | null>(null)
+  const [activeImage, setActiveImage] = useState<StoredImage | null>(null)
+
+  async function loadImages() {
+    setImagesLoading(true)
+    setImagesError(null)
+    try {
+      const { data, error } = await supabase.storage
+        .from("xrays")
+        .list("", {
+          limit: 100,
+          sortBy: { column: "created_at", order: "desc" },
+        })
+
+      if (error) throw error
+
+      const list: StoredImage[] = (data ?? [])
+        .filter((f) => f.name && !f.name.endsWith("/"))
+        .map((f) => {
+          const { data: urlData } = supabase.storage
+            .from("xrays")
+            .getPublicUrl(f.name)
+          return {
+            name: f.name,
+            url: urlData.publicUrl,
+            createdAt: f.created_at ?? null,
+          }
+        })
+
+      setImages(list)
+    } catch (err) {
+      console.error("Failed to list images:", err)
+      setImagesError(err instanceof Error ? err.message : "Failed to load images")
+    } finally {
+      setImagesLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadImages()
+  }, [])
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -76,7 +127,13 @@ export default function Home() {
         .getPublicUrl(data.path)
 
       setImageUrl(urlData.publicUrl)
+      setActiveImage({
+        name: data.path,
+        url: urlData.publicUrl,
+        createdAt: new Date().toISOString(),
+      })
       setCircles([])
+      await loadImages()
     } catch (err) {
       console.error("Upload failed:", err)
       setUploadError(err instanceof Error ? err.message : "Upload failed")
@@ -85,6 +142,13 @@ export default function Home() {
       // reset input so the same file can be re-selected
       if (fileInputRef.current) fileInputRef.current.value = ""
     }
+  }
+
+  function selectImage(img: StoredImage) {
+    setActiveImage(img)
+    setImageUrl(img.url)
+    setCircles([])
+    setDrawMode(false)
   }
 
   function handleImageClick(e: React.MouseEvent<HTMLDivElement>) {
@@ -162,9 +226,14 @@ export default function Home() {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="flex items-center gap-2">
-                      <span className="text-muted-foreground">🩻</span> Chest PA · IMG-1042
+                      <span className="text-muted-foreground">🩻</span>{" "}
+                      {activeImage ? friendlyName(activeImage.name) : "No image selected"}
                     </CardTitle>
-                    <CardDescription>Personal collection · imported Mar 2025</CardDescription>
+                    <CardDescription>
+                      {activeImage?.createdAt
+                        ? `Imported ${formatDate(activeImage.createdAt)}`
+                        : "Import an image or pick one from the sidebar"}
+                    </CardDescription>
                   </div>
                   <div className="flex gap-2">
                     <Badge variant="secondary" className="text-xs">
@@ -319,28 +388,64 @@ export default function Home() {
             <Card>
               <CardHeader className="pb-4">
                 <CardTitle>My Images</CardTitle>
-                <CardDescription>Recent uploads and sets</CardDescription>
+                <CardDescription>From your Supabase bucket</CardDescription>
               </CardHeader>
               <CardContent className="p-0">
                 <ScrollArea className="h-72">
-                  {queue.map((row, i) => (
-                    <div
-                      key={row.id}
-                      className={`flex items-center justify-between px-4 py-3 hover:bg-muted/50 cursor-pointer border-b last:border-b-0 ${
-                        i === 0 ? "bg-blue-50/40 border-l-2 border-l-blue-600" : ""
-                      }`}
-                    >
-                      <div>
-                        <div className="font-medium text-sm">{row.id} · {row.title}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {row.tag} · {row.regions} regions
-                        </div>
-                      </div>
-                      <Badge variant={tagVariant(row.tag)} className="text-[10px]">
-                        {row.status}
-                      </Badge>
+                  {imagesLoading && (
+                    <div className="px-4 py-6 text-sm text-muted-foreground text-center">
+                      Loading images…
                     </div>
-                  ))}
+                  )}
+
+                  {imagesError && (
+                    <div className="px-4 py-3 text-xs text-destructive">
+                      {imagesError}
+                    </div>
+                  )}
+
+                  {!imagesLoading && !imagesError && images.length === 0 && (
+                    <div className="px-4 py-6 text-sm text-muted-foreground text-center">
+                      No images yet. Click &quot;Import Images&quot; to upload one.
+                    </div>
+                  )}
+
+                  {images.map((img) => {
+                    const isActive = activeImage?.name === img.name
+                    return (
+                      <div
+                        key={img.name}
+                        onClick={() => selectImage(img)}
+                        className={`flex items-center gap-3 px-4 py-3 hover:bg-muted/50 cursor-pointer border-b last:border-b-0 ${
+                          isActive ? "bg-blue-50/40 border-l-2 border-l-blue-600" : ""
+                        }`}
+                      >
+                        {/* Thumbnail */}
+                        <div className="h-10 w-10 rounded-md overflow-hidden bg-slate-900 shrink-0">
+                          <img
+                            src={img.url}
+                            alt={img.name}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-sm truncate">
+                            {friendlyName(img.name)}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {formatDate(img.createdAt)}
+                          </div>
+                        </div>
+
+                        {isActive && (
+                          <Badge variant="secondary" className="text-[10px]">
+                            Open
+                          </Badge>
+                        )}
+                      </div>
+                    )
+                  })}
                 </ScrollArea>
               </CardContent>
             </Card>

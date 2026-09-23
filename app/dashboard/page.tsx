@@ -67,6 +67,10 @@ export default function Home() {
   const [imagesError, setImagesError] = useState<string | null>(null)
   const [activeImage, setActiveImage] = useState<StoredImage | null>(null)
 
+  // Fullscreen state & ref
+  const imageContainerRef = useRef<HTMLDivElement>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
   async function loadImages() {
     setImagesLoading(true)
     setImagesError(null)
@@ -105,6 +109,36 @@ export default function Home() {
   useEffect(() => {
     loadImages()
   }, [])
+
+  // Track fullscreen changes (also handles ESC exit)
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener("fullscreenchange", onChange)
+    return () => document.removeEventListener("fullscreenchange", onChange)
+  }, [])
+
+  async function toggleFullscreen() {
+    const el = imageContainerRef.current
+    if (!el) return
+
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+      } else {
+        // Safari / older browser fallbacks
+        const anyEl = el as any
+        if (el.requestFullscreen) {
+          await el.requestFullscreen()
+        } else if (anyEl.webkitRequestFullscreen) {
+          await anyEl.webkitRequestFullscreen()
+        } else if (anyEl.msRequestFullscreen) {
+          await anyEl.msRequestFullscreen()
+        }
+      }
+    } catch (err) {
+      console.error("Fullscreen failed:", err)
+    }
+  }
 
   async function loadAnnotations(imageName: string) {
     const { data, error } = await supabase
@@ -287,7 +321,16 @@ export default function Home() {
                       <span className="h-1.5 w-1.5 rounded-full bg-amber-500 mr-1" />
                       {circles.length} region{circles.length === 1 ? "" : "s"}
                     </Badge>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">⛶</Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={toggleFullscreen}
+                      disabled={!imageUrl}
+                      title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                    >
+                      {isFullscreen ? "⤢" : "⛶"}
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
@@ -295,10 +338,11 @@ export default function Home() {
                 {/* Image area */}
                 <div className="relative bg-slate-900 p-5">
                   <div
+                    ref={imageContainerRef}
                     onClick={handleImageClick}
-                    className={`relative h-80 w-full rounded-lg overflow-hidden bg-[radial-gradient(circle_at_30%_40%,#2f3e4e_0%,#0b1117_80%)] flex items-center justify-center shadow-inner ${
-                      drawMode ? "cursor-crosshair" : ""
-                    }`}
+                    className={`relative w-full rounded-lg overflow-hidden bg-[radial-gradient(circle_at_30%_40%,#2f3e4e_0%,#0b1117_80%)] flex items-center justify-center shadow-inner ${
+                      isFullscreen ? "h-screen" : "h-80"
+                    } ${drawMode ? "cursor-crosshair" : ""}`}
                   >
                     {imageUrl ? (
                       <img

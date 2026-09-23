@@ -24,7 +24,7 @@ const annotations = [
 ]
 
 type Circle = {
-  id: string
+  id: string // uuid from DB
   x: number // 0-100 (% of container width)
   y: number // 0-100 (% of container height)
   r: number // radius in % of container width
@@ -106,6 +106,20 @@ export default function Home() {
     loadImages()
   }, [])
 
+  async function loadAnnotations(imageName: string) {
+    const { data, error } = await supabase
+      .from("annotations")
+      .select("id, x, y, r, note")
+      .eq("image_name", imageName)
+      .order("created_at", { ascending: true })
+
+    if (error) {
+      console.error("Failed to load annotations:", error)
+      return
+    }
+    setCircles(data ?? [])
+  }
+
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -132,7 +146,7 @@ export default function Home() {
         url: urlData.publicUrl,
         createdAt: new Date().toISOString(),
       })
-      setCircles([])
+      await loadAnnotations(data.path)
       await loadImages()
     } catch (err) {
       console.error("Upload failed:", err)
@@ -147,30 +161,63 @@ export default function Home() {
   function selectImage(img: StoredImage) {
     setActiveImage(img)
     setImageUrl(img.url)
-    setCircles([])
     setDrawMode(false)
+    setCircles([]) // clear immediately so no stale circles flash
+    loadAnnotations(img.name)
   }
 
-  function handleImageClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!drawMode || !imageUrl) return
+  async function handleImageClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (!drawMode || !imageUrl || !activeImage) return
 
     const rect = e.currentTarget.getBoundingClientRect()
     const x = ((e.clientX - rect.left) / rect.width) * 100
     const y = ((e.clientY - rect.top) / rect.height) * 100
-
     const note = window.prompt("Note for this annotation:") ?? ""
 
-    setCircles((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), x, y, r: 6, note },
-    ])
+    // Optimistic: show immediately with a temp id
+    const tempId = crypto.randomUUID()
+    const optimistic: Circle = { id: tempId, x, y, r: 6, note }
+    setCircles((prev) => [...prev, optimistic])
     setDrawMode(false)
+
+    const { data, error } = await supabase
+      .from("annotations")
+      .insert({
+        image_name: activeImage.name,
+        x,
+        y,
+        r: 6,
+        note,
+        // user_id: (await supabase.auth.getUser()).data.user?.id, // if using auth
+      })
+      .select("id")
+      .single()
+
+    if (error) {
+      console.error("Failed to save annotation:", error)
+      // roll back the optimistic insert
+      setCircles((prev) => prev.filter((c) => c.id !== tempId))
+      return
+    }
+
+    // swap temp id for real DB id
+    setCircles((prev) =>
+      prev.map((c) => (c.id === tempId ? { ...c, id: data.id } : c))
+    )
   }
 
-  function handleCircleClick(e: React.MouseEvent, id: string) {
+  async function handleCircleClick(e: React.MouseEvent, id: string) {
     e.stopPropagation()
-    if (window.confirm("Delete this annotation?")) {
-      setCircles((prev) => prev.filter((c) => c.id !== id))
+    if (!window.confirm("Delete this annotation?")) return
+
+    // Optimistic removal
+    const snapshot = circles
+    setCircles((prev) => prev.filter((c) => c.id !== id))
+
+    const { error } = await supabase.from("annotations").delete().eq("id", id)
+    if (error) {
+      console.error("Failed to delete annotation:", error)
+      setCircles(snapshot) // restore on failure
     }
   }
 

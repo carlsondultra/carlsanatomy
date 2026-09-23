@@ -15,7 +15,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
 
-import {supabase} from "@/lib/supabase"
+import { supabase } from "@/lib/supabase"
 
 const queue = [
   { id: "IMG-1042", title: "Chest PA", tag: "Favorites", status: "Open", regions: 3 },
@@ -31,6 +31,14 @@ const annotations = [
   { id: 3, label: "Outline trace", color: "bg-blue-500", author: "You", time: "15m ago", note: "Traced the outer edge for reference. Pretty happy with how it lines up." },
 ]
 
+type Circle = {
+  id: string
+  x: number // 0-100 (% of container width)
+  y: number // 0-100 (% of container height)
+  r: number // radius in % of container width
+  note: string
+}
+
 function tagVariant(tag: string) {
   if (tag === "Favorites") return "default"
   if (tag === "Study Set") return "destructive"
@@ -42,6 +50,10 @@ export default function Home() {
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const [circles, setCircles] = useState<Circle[]>([])
+  const [drawMode, setDrawMode] = useState(false)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -64,6 +76,7 @@ export default function Home() {
         .getPublicUrl(data.path)
 
       setImageUrl(urlData.publicUrl)
+      setCircles([])
     } catch (err) {
       console.error("Upload failed:", err)
       setUploadError(err instanceof Error ? err.message : "Upload failed")
@@ -71,6 +84,29 @@ export default function Home() {
       setUploading(false)
       // reset input so the same file can be re-selected
       if (fileInputRef.current) fileInputRef.current.value = ""
+    }
+  }
+
+  function handleImageClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (!drawMode || !imageUrl) return
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = ((e.clientX - rect.left) / rect.width) * 100
+    const y = ((e.clientY - rect.top) / rect.height) * 100
+
+    const note = window.prompt("Note for this annotation:") ?? ""
+
+    setCircles((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), x, y, r: 6, note },
+    ])
+    setDrawMode(false)
+  }
+
+  function handleCircleClick(e: React.MouseEvent, id: string) {
+    e.stopPropagation()
+    if (window.confirm("Delete this annotation?")) {
+      setCircles((prev) => prev.filter((c) => c.id !== id))
     }
   }
 
@@ -133,7 +169,7 @@ export default function Home() {
                   <div className="flex gap-2">
                     <Badge variant="secondary" className="text-xs">
                       <span className="h-1.5 w-1.5 rounded-full bg-amber-500 mr-1" />
-                      3 regions
+                      {circles.length} region{circles.length === 1 ? "" : "s"}
                     </Badge>
                     <Button variant="ghost" size="icon" className="h-8 w-8">⛶</Button>
                   </div>
@@ -142,12 +178,17 @@ export default function Home() {
               <CardContent className="p-0">
                 {/* Image area */}
                 <div className="relative bg-slate-900 p-5">
-                  <div className="relative h-80 w-full rounded-lg overflow-hidden bg-[radial-gradient(circle_at_30%_40%,#2f3e4e_0%,#0b1117_80%)] flex items-center justify-center shadow-inner">
+                  <div
+                    onClick={handleImageClick}
+                    className={`relative h-80 w-full rounded-lg overflow-hidden bg-[radial-gradient(circle_at_30%_40%,#2f3e4e_0%,#0b1117_80%)] flex items-center justify-center shadow-inner ${
+                      drawMode ? "cursor-crosshair" : ""
+                    }`}
+                  >
                     {imageUrl ? (
                       <img
                         src={imageUrl}
                         alt="Uploaded X-ray"
-                        className="absolute inset-0 h-full w-full object-contain"
+                        className="absolute inset-0 h-full w-full object-contain pointer-events-none"
                       />
                     ) : (
                       <>
@@ -157,35 +198,34 @@ export default function Home() {
                       </>
                     )}
 
-                    {/* Region boxes — only shown when an image is loaded */}
-                    {imageUrl && (
-                      <>
-                        <div
-                          className="absolute border-2 border-orange-500 bg-orange-500/10 rounded cursor-pointer hover:bg-orange-500/25 transition-all"
-                          style={{ top: "30%", left: "20%", width: "18%", height: "20%" }}
-                        >
-                          <div className="absolute -top-7 left-0 bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded shadow-md whitespace-nowrap">
-                            Interesting shadow
+                    {/* Interactive circle overlays */}
+                    {circles.map((c) => (
+                      <div
+                        key={c.id}
+                        onMouseEnter={() => setHoveredId(c.id)}
+                        onMouseLeave={() => setHoveredId(null)}
+                        onClick={(e) => handleCircleClick(e, c.id)}
+                        className={`absolute rounded-full border-2 cursor-pointer transition-colors ${
+                          hoveredId === c.id
+                            ? "border-orange-300 ring-2 ring-orange-300/50 bg-orange-400/30"
+                            : "border-orange-400 bg-orange-400/15 hover:bg-orange-400/30"
+                        }`}
+                        style={{
+                          left: `${c.x}%`,
+                          top: `${c.y}%`,
+                          width: `${c.r * 2}%`,
+                          aspectRatio: "1 / 1",
+                          transform: "translate(-50%, -50%)",
+                        }}
+                      >
+                        {hoveredId === c.id && (
+                          <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-48 rounded-md bg-slate-800 text-white text-xs px-3 py-2 shadow-lg pointer-events-none z-10">
+                            {c.note || "(no note)"}
+                            <div className="absolute left-1/2 -translate-x-1/2 top-full w-2 h-2 bg-slate-800 rotate-45" />
                           </div>
-                        </div>
-                        <div
-                          className="absolute border-2 border-orange-500 bg-orange-500/10 rounded cursor-pointer hover:bg-orange-500/25 transition-all"
-                          style={{ top: "55%", left: "60%", width: "12%", height: "14%" }}
-                        >
-                          <div className="absolute -top-7 left-0 bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded shadow-md whitespace-nowrap">
-                            Small dot
-                          </div>
-                        </div>
-                        <div
-                          className="absolute border-2 border-blue-500 bg-blue-500/10 rounded cursor-pointer hover:bg-blue-500/25 transition-all"
-                          style={{ top: "50%", left: "45%", width: "20%", height: "15%" }}
-                        >
-                          <div className="absolute -top-7 left-0 bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded shadow-md whitespace-nowrap">
-                            Outline trace
-                          </div>
-                        </div>
-                      </>
-                    )}
+                        )}
+                      </div>
+                    ))}
 
                     <div className="absolute bottom-4 right-4 text-[10px] text-slate-400 bg-black/40 px-2 py-0.5 rounded">
                       zoom 100%
@@ -195,8 +235,14 @@ export default function Home() {
 
                 {/* Toolbar */}
                 <div className="border-t px-5 py-3 flex flex-wrap items-center gap-3 text-sm">
-                  <Button variant="outline" size="sm" className="gap-1.5">
-                    ✏️ Draw Region
+                  <Button
+                    variant={drawMode ? "default" : "outline"}
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setDrawMode((v) => !v)}
+                    disabled={!imageUrl}
+                  >
+                    ⭕ {drawMode ? "Click image to place…" : "Draw Circle"}
                   </Button>
                   <Button variant="outline" size="sm" className="gap-1.5">
                     🖍️ Highlight
@@ -226,6 +272,27 @@ export default function Home() {
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
+                {circles.length > 0 && (
+                  <div className="space-y-2 pb-3 border-b">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Placed annotations ({circles.length})
+                    </p>
+                    {circles.map((c) => (
+                      <div
+                        key={c.id}
+                        onMouseEnter={() => setHoveredId(c.id)}
+                        onMouseLeave={() => setHoveredId(null)}
+                        className={`rounded-lg border p-3 text-xs flex items-start gap-2 transition-colors ${
+                          hoveredId === c.id ? "bg-orange-50 border-orange-300" : "bg-muted/30"
+                        }`}
+                      >
+                        <span className="h-2.5 w-2.5 rounded-full bg-orange-400 mt-1 shrink-0" />
+                        <span className="text-muted-foreground">{c.note || "(no note)"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {annotations.map((a) => (
                   <div key={a.id} className="rounded-lg border bg-muted/30 p-3 space-y-2">
                     <div className="flex items-center justify-between">

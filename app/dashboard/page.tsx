@@ -360,12 +360,6 @@ export default function Home() {
                   >
                     ⭕ {drawMode ? "Click image to place…" : "Draw Circle"}
                   </Button>
-                  <Button variant="outline" size="sm" className="gap-1.5">
-                    🖍️ Highlight
-                  </Button>
-                  <Button variant="outline" size="sm" className="gap-1.5">
-                    📏 Measure
-                  </Button>
                   <div className="flex-1" />
                   <span className="text-xs text-muted-foreground">
                     {uploading ? "⏳ Uploading…" : imageUrl ? "💾 Saved" : "No image loaded"}

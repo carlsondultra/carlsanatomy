@@ -37,6 +37,14 @@ type StoredImage = {
   createdAt: string | null
 }
 
+type Note = {
+  id: string
+  image_name: string
+  body: string
+  author: string | null
+  created_at: string
+}
+
 function friendlyName(name: string) {
   const stripped = name.replace(/^[0-9a-f-]{36}-/i, "")
   return stripped.replace(/\.[^.]+$/, "") || name
@@ -49,6 +57,17 @@ function formatDate(iso: string | null) {
     month: "short",
     day: "numeric",
     year: "numeric",
+  })
+}
+
+function formatDateTime(iso: string | null) {
+  if (!iso) return "—"
+  const d = new Date(iso)
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   })
 }
 
@@ -66,6 +85,12 @@ export default function Home() {
   const [imagesLoading, setImagesLoading] = useState(true)
   const [imagesError, setImagesError] = useState<string | null>(null)
   const [activeImage, setActiveImage] = useState<StoredImage | null>(null)
+
+  // Notes state
+  const [notes, setNotes] = useState<Note[]>([])
+  const [notesLoading, setNotesLoading] = useState(false)
+  const [noteDraft, setNoteDraft] = useState("")
+  const noteTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Fullscreen state & ref
   const imageContainerRef = useRef<HTMLDivElement>(null)
@@ -154,6 +179,23 @@ export default function Home() {
     setCircles(data ?? [])
   }
 
+  async function loadNotes(imageName: string) {
+    setNotesLoading(true)
+    const { data, error } = await supabase
+      .from("notes")
+      .select("id, image_name, body, author, created_at")
+      .eq("image_name", imageName)
+      .order("created_at", { ascending: false })
+
+    if (error) {
+      console.error("Failed to load notes:", error)
+      setNotes([])
+    } else {
+      setNotes(data ?? [])
+    }
+    setNotesLoading(false)
+  }
+
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -181,6 +223,7 @@ export default function Home() {
         createdAt: new Date().toISOString(),
       })
       await loadAnnotations(data.path)
+      await loadNotes(data.path)
       await loadImages()
     } catch (err) {
       console.error("Upload failed:", err)
@@ -197,7 +240,10 @@ export default function Home() {
     setImageUrl(img.url)
     setDrawMode(false)
     setCircles([]) // clear immediately so no stale circles flash
+    setNotes([])   // clear stale notes too
+    setNoteDraft("")
     loadAnnotations(img.name)
+    loadNotes(img.name)
   }
 
   async function handleImageClick(e: React.MouseEvent<HTMLDivElement>) {
@@ -255,6 +301,59 @@ export default function Home() {
     }
   }
 
+  async function saveNote() {
+    const body = noteDraft.trim()
+    if (!body || !activeImage) return
+
+    // Optimistic insert
+    const tempId = crypto.randomUUID()
+    const optimistic: Note = {
+      id: tempId,
+      image_name: activeImage.name,
+      body,
+      author: "You",
+      created_at: new Date().toISOString(),
+    }
+    setNotes((prev) => [optimistic, ...prev])
+    setNoteDraft("")
+
+    const { data, error } = await supabase
+      .from("notes")
+      .insert({
+        image_name: activeImage.name,
+        body,
+        author: "You",
+        // user_id: (await supabase.auth.getUser()).data.user?.id,
+      })
+      .select("id, image_name, body, author, created_at")
+      .single()
+
+    if (error) {
+      console.error("Failed to save note:", error)
+      setNotes((prev) => prev.filter((n) => n.id !== tempId)) // roll back
+      return
+    }
+
+    setNotes((prev) => prev.map((n) => (n.id === tempId ? data : n)))
+  }
+
+  async function handleDeleteNote(id: string) {
+    if (!window.confirm("Delete this note?")) return
+
+    const snapshot = notes
+    setNotes((prev) => prev.filter((n) => n.id !== id))
+
+    const { error } = await supabase.from("notes").delete().eq("id", id)
+    if (error) {
+      console.error("Failed to delete note:", error)
+      setNotes(snapshot)
+    }
+  }
+
+  function focusNoteInput() {
+    noteTextareaRef.current?.focus()
+  }
+
   return (
     <div className="min-h-screen bg-muted/40 p-6">
       <div className="mx-auto max-w-6xl space-y-6">
@@ -284,7 +383,9 @@ export default function Home() {
             >
               {uploading ? "Uploading…" : "Import Images"}
             </Button>
-            <Button size="sm">New Note</Button>
+            <Button size="sm" disabled={!activeImage} onClick={focusNoteInput}>
+              New Note
+            </Button>
             <Avatar className="h-8 w-8">
               <AvatarFallback>CA</AvatarFallback>
             </Avatar>
@@ -421,7 +522,13 @@ export default function Home() {
                   </CardTitle>
                   <CardDescription>Personal annotations on this image</CardDescription>
                 </div>
-                <Button variant="ghost" size="sm" className="gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1"
+                  onClick={focusNoteInput}
+                  disabled={!activeImage}
+                >
                   + Add note
                 </Button>
               </CardHeader>
@@ -447,6 +554,47 @@ export default function Home() {
                   </div>
                 )}
 
+                {/* Saved notes from Supabase */}
+                {notesLoading && (
+                  <p className="text-xs text-muted-foreground">Loading notes…</p>
+                )}
+
+                {!notesLoading && activeImage && notes.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    No notes yet for this image.
+                  </p>
+                )}
+
+                {!activeImage && (
+                  <p className="text-xs text-muted-foreground">
+                    Select an image to view or add notes.
+                  </p>
+                )}
+
+                {notes.map((n) => (
+                  <div key={n.id} className="rounded-lg border bg-muted/30 p-3 space-y-1 group">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium">{n.author ?? "You"}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          {formatDateTime(n.created_at)}
+                        </span>
+                        <button
+                          onClick={() => handleDeleteNote(n.id)}
+                          className="text-xs text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Delete note"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+                      {n.body}
+                    </p>
+                  </div>
+                ))}
+
+                {/* Legacy static annotations */}
                 {annotations.map((a) => (
                   <div key={a.id} className="rounded-lg border bg-muted/30 p-3 space-y-2">
                     <div className="flex items-center justify-between">
@@ -459,10 +607,33 @@ export default function Home() {
                     <p className="text-xs text-muted-foreground">{a.note}</p>
                   </div>
                 ))}
+
                 <Textarea
+                  ref={noteTextareaRef}
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
                   placeholder="Jot down a thought about this image..."
                   className="min-h-[60px] text-sm resize-none"
+                  disabled={!activeImage}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                      e.preventDefault()
+                      saveNote()
+                    }
+                  }}
                 />
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-muted-foreground">
+                    ⌘/Ctrl + Enter to save
+                  </span>
+                  <Button
+                    size="sm"
+                    onClick={saveNote}
+                    disabled={!activeImage || !noteDraft.trim()}
+                  >
+                    Save note
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>

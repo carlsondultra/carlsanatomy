@@ -17,12 +17,6 @@ import { Textarea } from "@/components/ui/textarea"
 
 import { supabase } from "@/lib/supabase"
 
-const annotations = [
-  { id: 1, label: "Interesting shadow", color: "bg-red-500", author: "You", time: "2m ago", note: "Noticed a darker patch here — worth comparing with other scans." },
-  { id: 2, label: "Small dot", color: "bg-amber-500", author: "You", time: "32m ago", note: "Tiny bright spot. Probably nothing, but flagging it to check later." },
-  { id: 3, label: "Outline trace", color: "bg-blue-500", author: "You", time: "15m ago", note: "Traced the outer edge for reference. Pretty happy with how it lines up." },
-]
-
 type Circle = {
   id: string // uuid from DB
   x: number // 0-100 (% of container width)
@@ -591,20 +585,6 @@ export default function Home() {
                     <p className="text-xs text-muted-foreground whitespace-pre-wrap">
                       {n.body}
                     </p>
-                  </div>
-                ))}
-
-                {/* Legacy static annotations */}
-                {annotations.map((a) => (
-                  <div key={a.id} className="rounded-lg border bg-muted/30 p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-2 text-sm font-medium">
-                        <span className={`h-2.5 w-2.5 rounded-full ${a.color}`} />
-                        {a.label}
-                      </span>
-                      <span className="text-xs text-muted-foreground">{a.time}</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">{a.note}</p>
                   </div>
                 ))}
 
